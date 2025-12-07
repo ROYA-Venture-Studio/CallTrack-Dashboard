@@ -9,10 +9,15 @@ function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [records, setRecords] = useState([]);
+  const [filteredRecords, setFilteredRecords] = useState([]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [playingId, setPlayingId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('newest');
+  const [audioElement, setAudioElement] = useState(null);
+  const [currentAudioUrl, setCurrentAudioUrl] = useState(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -37,10 +42,42 @@ function App() {
         ...doc.data()
       }));
       setRecords(data);
+      setFilteredRecords(data);
     });
 
     return () => unsubscribe();
   }, [user]);
+
+  // Filter and sort records
+  useEffect(() => {
+    let filtered = [...records];
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      filtered = filtered.filter(record => 
+        record.phoneNumber?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        record.contactName?.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    // Apply sorting
+    filtered.sort((a, b) => {
+      switch (sortBy) {
+        case 'newest':
+          return (b.timestamp || 0) - (a.timestamp || 0);
+        case 'oldest':
+          return (a.timestamp || 0) - (b.timestamp || 0);
+        case 'longest':
+          return (b.duration || 0) - (a.duration || 0);
+        case 'shortest':
+          return (a.duration || 0) - (b.duration || 0);
+        default:
+          return 0;
+      }
+    });
+
+    setFilteredRecords(filtered);
+  }, [records, searchQuery, sortBy]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -68,28 +105,38 @@ function App() {
   };
 
   const playRecording = async (record) => {
-    // Check for direct URL first, then try storage path
     const audioUrl = record.storageUrl || record.recordingPath;
     if (!audioUrl) return;
     
     try {
-      let url = audioUrl;
+      // If same recording is already loaded, do nothing (user can control via player)
+      if (playingId === record.id) {
+        return;
+      }
+
+      // Stop any currently playing audio
+      if (audioElement) {
+        audioElement.pause();
+      }
       
-      // If it's a storage path (not a full URL), get download URL
+      let url = audioUrl;
       if (!audioUrl.startsWith('http')) {
         const audioRef = ref(storage, audioUrl);
         url = await getDownloadURL(audioRef);
       }
       
-      const audio = new Audio(url);
-      audio.play();
       setPlayingId(record.id);
-      
-      audio.onended = () => setPlayingId(null);
+      setCurrentAudioUrl(url);
     } catch (err) {
       console.error('Error playing recording:', err);
       alert('Could not play recording');
     }
+  };
+
+  const stopAudio = () => {
+    setPlayingId(null);
+    setCurrentAudioUrl(null);
+    setAudioElement(null);
   };
 
   if (loading) {
@@ -150,6 +197,26 @@ function App() {
           </div>
         </div>
 
+        <div className="filters-container">
+          <input
+            type="text"
+            placeholder="Search by phone number"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="search-input"
+          />
+          <select 
+            value={sortBy} 
+            onChange={(e) => setSortBy(e.target.value)}
+            className="sort-select"
+          >
+            <option value="newest">Newest First</option>
+            <option value="oldest">Oldest First</option>
+            <option value="longest">Longest Duration</option>
+            <option value="shortest">Shortest Duration</option>
+          </select>
+        </div>
+
         <div className="table-container">
           <table>
             <thead>
@@ -163,12 +230,14 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {records.length === 0 ? (
+              {filteredRecords.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="no-data">No call records yet</td>
+                  <td colSpan="6" className="no-data">
+                    {searchQuery ? 'No matching records found' : 'No call records yet'}
+                  </td>
                 </tr>
               ) : (
-                records.map((record) => (
+                filteredRecords.map((record) => (
                   <tr key={record.id}>
                     <td>{formatDate(record.timestamp)}</td>
                     <td>{record.deviceId || record.deviceName || 'Unknown'}</td>
@@ -197,6 +266,25 @@ function App() {
             </tbody>
           </table>
         </div>
+
+        {/* Audio Player */}
+        {currentAudioUrl && (
+          <div className="audio-player-container">
+            <div className="audio-player">
+              <span className="audio-label">Now Playing</span>
+              <audio 
+                controls 
+                src={currentAudioUrl}
+                autoPlay
+                onEnded={stopAudio}
+                ref={(audio) => {
+                  if (audio) setAudioElement(audio);
+                }}
+              />
+              <button className="close-player" onClick={stopAudio}>×</button>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
