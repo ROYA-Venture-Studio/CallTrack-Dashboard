@@ -68,11 +68,18 @@ function App() {
   };
 
   const playRecording = async (record) => {
-    if (!record.recordingPath) return;
+    // Check for direct URL first, then try storage path
+    const audioUrl = record.storageUrl || record.recordingPath;
+    if (!audioUrl) return;
     
     try {
-      const audioRef = ref(storage, record.recordingPath);
-      const url = await getDownloadURL(audioRef);
+      let url = audioUrl;
+      
+      // If it's a storage path (not a full URL), get download URL
+      if (!audioUrl.startsWith('http')) {
+        const audioRef = ref(storage, audioUrl);
+        url = await getDownloadURL(audioRef);
+      }
       
       const audio = new Audio(url);
       audio.play();
@@ -93,7 +100,7 @@ function App() {
     return (
       <div className="login-container">
         <div className="login-box">
-          <h1>í³ž Call Track</h1>
+          <h1>ï¿½ï¿½ï¿½ Call Track</h1>
           <p>Admin Dashboard</p>
           <form onSubmit={handleLogin}>
             <input
@@ -121,7 +128,7 @@ function App() {
   return (
     <div className="dashboard">
       <header>
-        <h1>í³ž Call Track Dashboard</h1>
+        <h1>ï¿½ï¿½ï¿½ Call Track Dashboard</h1>
         <div className="header-right">
           <span>{user.email}</span>
           <button onClick={handleLogout}>Logout</button>
@@ -173,7 +180,7 @@ function App() {
                     </td>
                     <td>{formatDuration(record.duration)}</td>
                     <td>
-                      {record.recordingPath ? (
+                      {(record.storageUrl || record.recordingPath) ? (
                         <button 
                           className={`play-btn ${playingId === record.id ? 'playing' : ''}`}
                           onClick={() => playRecording(record)}
