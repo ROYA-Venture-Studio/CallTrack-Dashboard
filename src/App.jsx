@@ -100,7 +100,7 @@ function App() {
     return (
       <div className="login-container">
         <div className="login-box">
-          <h1>��� Call Track</h1>
+          <h1>Call Track</h1>
           <p>Admin Dashboard</p>
           <form onSubmit={handleLogin}>
             <input
@@ -128,7 +128,7 @@ function App() {
   return (
     <div className="dashboard">
       <header>
-        <h1>��� Call Track Dashboard</h1>
+        <h1>Call Track Dashboard</h1>
         <div className="header-right">
           <span>{user.email}</span>
           <button onClick={handleLogout}>Logout</button>
