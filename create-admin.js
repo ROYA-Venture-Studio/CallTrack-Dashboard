@@ -3,12 +3,12 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDtkw077MO4x7x5IXT2PZa-rQFLbvz_l_M",
+  apiKey: "AIzaSyCSqeWyyDGX8EZcNmrBTb92_c93TA0jnik",
   authDomain: "call-track-164b6.firebaseapp.com",
   projectId: "call-track-164b6",
   storageBucket: "call-track-164b6.firebasestorage.app",
   messagingSenderId: "865867377848",
-  appId: "1:865867377848:web:YOUR_WEB_APP_ID"
+  appId: "1:865867377848:web:21fb506b37a39b774e984d"
 };
 
 const app = initializeApp(firebaseConfig);

@@ -4,12 +4,12 @@ import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyC4drxf0WZZWDhk9wP2yWB077XibEIXct8",
-  authDomain: "call-track-d1699.firebaseapp.com",
-  projectId: "call-track-d1699",
-  storageBucket: "call-track-d1699.firebasestorage.app",
-  messagingSenderId: "483015685810",
-  appId: "1:483015685810:web:7ea3e4938cc8e8f5f3fbab"
+  apiKey: "AIzaSyCSqeWyyDGX8EZcNmrBTb92_c93TA0jnik",
+  authDomain: "call-track-164b6.firebaseapp.com",
+  projectId: "call-track-164b6",
+  storageBucket: "call-track-164b6.firebasestorage.app",
+  messagingSenderId: "865867377848",
+  appId: "1:865867377848:web:21fb506b37a39b774e984d"
 };
 
 const app = initializeApp(firebaseConfig);
