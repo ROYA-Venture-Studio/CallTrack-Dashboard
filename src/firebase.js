@@ -9,8 +9,10 @@ const firebaseConfig = {
   projectId: "call-track-164b6",
   storageBucket: "call-track-164b6.firebasestorage.app",
   messagingSenderId: "865867377848",
-  appId: "1:865867377848:web:21fb506b37a39b774e984d"
+  appId: "1:865867377848:web:21fb506b37a39b774e984d",
+  measurementId: "G-62GG17LZZC"
 };
+
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
