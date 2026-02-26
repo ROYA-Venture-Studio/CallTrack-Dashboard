@@ -1,473 +1,371 @@
-import { useState, useEffect } from 'react';
-import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, orderBy, onSnapshot, limit, doc, setDoc, getDoc } from 'firebase/firestore';
-import { ref, getDownloadURL } from 'firebase/storage';
-import { auth, db, storage } from './firebase';
+import { useState, useEffect, useCallback } from 'react';
+import { login, logout, getStoredAuth, fetchRecords, getRecordingUrl, getContactMappings, saveContactMappings } from './api';
 import './App.css';
 
-function App() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [records, setRecords] = useState([]);
-  const [filteredRecords, setFilteredRecords] = useState([]);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [playingId, setPlayingId] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState('newest');
-  const [audioElement, setAudioElement] = useState(null);
-  const [currentAudioUrl, setCurrentAudioUrl] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [contactMappings, setContactMappings] = useState({});
-  const [newContactPhone, setNewContactPhone] = useState('');
-  const [newContactName, setNewContactName] = useState('');
-  const recordsPerPage = 5;
+const RECORDS_PER_PAGE = 20;
 
+export default function App() {
+  const [user, setUser]                     = useState(null);
+  const [loading, setLoading]               = useState(true);
+  const [records, setRecords]               = useState([]);
+  const [filtered, setFiltered]             = useState([]);
+  const [email, setEmail]                   = useState('');
+  const [password, setPassword]             = useState('');
+  const [loginError, setLoginError]         = useState('');
+  const [playingId, setPlayingId]           = useState(null);
+  const [playingLabel, setPlayingLabel]     = useState('');
+  const [search, setSearch]                 = useState('');
+  const [sortBy, setSortBy]                 = useState('newest');
+  const [currentPage, setCurrentPage]       = useState(1);
+  const [currentAudioUrl, setCurrentAudioUrl] = useState(null);
+  const [audioEl, setAudioEl]               = useState(null);
+  const [mappings, setMappings]             = useState({});
+  const [newPhone, setNewPhone]             = useState('');
+  const [newName, setNewName]               = useState('');
+
+  /* ── Auth ── */
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    const stored = getStoredAuth();
+    if (stored) setUser(stored);
+    setLoading(false);
   }, []);
 
-  // Load contact mappings
   useEffect(() => {
     if (!user) return;
+    getContactMappings().then(setMappings).catch(console.error);
+  }, [user]);
 
-    const loadMappings = async () => {
-      try {
-        const docRef = doc(db, 'settings', 'contact_mappings');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setContactMappings(docSnap.data() || {});
-        }
-      } catch (err) {
-        console.error('Error loading contact mappings:', err);
-      }
+  /* ── Data ── */
+  const loadRecords = useCallback(async () => {
+    if (!user) return;
+    try {
+      const data = await fetchRecords(10000, 0, sortBy);
+      setRecords(data.records || []);
+    } catch (e) { console.error(e); }
+  }, [user, sortBy]);
+
+  useEffect(() => {
+    loadRecords();
+    const iv = setInterval(loadRecords, 30000);
+    return () => clearInterval(iv);
+  }, [loadRecords]);
+
+  /* ── Filter / sort ── */
+  useEffect(() => {
+    let out = [...records];
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      out = out.filter(r =>
+        r.phoneNumber?.toLowerCase().includes(q) ||
+        r.contactName?.toLowerCase().includes(q) ||
+        r.hostPhoneNumber?.toLowerCase().includes(q) ||
+        r.hostName?.toLowerCase().includes(q) ||
+        (mappings[r.hostPhoneNumber] || '').toLowerCase().includes(q)
+      );
+    }
+    out.sort((a, b) => {
+      if (sortBy === 'oldest')   return (a.timestamp || 0) - (b.timestamp || 0);
+      if (sortBy === 'longest')  return (b.duration  || 0) - (a.duration  || 0);
+      if (sortBy === 'shortest') return (a.duration  || 0) - (b.duration  || 0);
+      return (b.timestamp || 0) - (a.timestamp || 0);
+    });
+    setFiltered(out);
+    setCurrentPage(1);
+  }, [records, search, sortBy, mappings]);
+
+  /* ── Helpers ── */
+  const fmt = (ts) => {
+    if (!ts) return { date: 'N/A', time: '' };
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return {
+      date: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+      time: d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
     };
-
-    loadMappings();
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const q = query(
-      collection(db, 'call_records'),
-      orderBy('timestamp', 'desc'),
-      limit(100)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      console.log('=== ALL CALL RECORDS ===');
-      data.forEach((record, index) => {
-        console.log(`Record ${index + 1}:`, {
-          id: record.id,
-          timestamp: record.timestamp,
-          phoneNumber: record.phoneNumber,
-          contactName: record.contactName,
-          callType: record.callType,
-          duration: record.duration,
-          deviceId: record.deviceId,
-          deviceName: record.deviceName,
-          hostPhoneNumber: record.hostPhoneNumber,
-          hostName: record.hostName,
-          storageUrl: record.storageUrl ? 'Present' : 'Missing',
-          firestoreId: record.firestoreId
-        });
-      });
-      console.log('Total records:', data.length);
-      setRecords(data);
-      setFilteredRecords(data);
-    });
-
-    return () => unsubscribe();
-  }, [user]);
-
-  // Filter and sort records
-  useEffect(() => {
-    let filtered = [...records];
-
-    // Apply search filter
-    if (searchQuery.trim()) {
-      filtered = filtered.filter(record => {
-        const query = searchQuery.toLowerCase();
-        const mappedHostName = contactMappings[record.hostPhoneNumber] || '';
-        
-        return (
-          // Search in number called
-          record.phoneNumber?.toLowerCase().includes(query) ||
-          // Search in contact name
-          record.contactName?.toLowerCase().includes(query) ||
-          // Search in host phone number
-          record.hostPhoneNumber?.toLowerCase().includes(query) ||
-          // Search in mapped host name (from contact mappings)
-          mappedHostName.toLowerCase().includes(query) ||
-          // Search in actual host name (from app settings)
-          record.hostName?.toLowerCase().includes(query)
-        );
-      });
-    }
-
-    // Apply sorting
-    filtered.sort((a, b) => {
-      switch (sortBy) {
-        case 'newest':
-          return (b.timestamp || 0) - (a.timestamp || 0);
-        case 'oldest':
-          return (a.timestamp || 0) - (b.timestamp || 0);
-        case 'longest':
-          return (b.duration || 0) - (a.duration || 0);
-        case 'shortest':
-          return (a.duration || 0) - (b.duration || 0);
-        default:
-          return 0;
-      }
-    });
-
-    setFilteredRecords(filtered);
-    setCurrentPage(1); // Reset to first page when filter changes
-  }, [records, searchQuery, sortBy, contactMappings]);
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setError('');
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      setError('Invalid email or password');
-    }
   };
 
-  const handleLogout = () => signOut(auth);
-
-  const formatDuration = (seconds) => {
-    if (!seconds) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  const fmtDuration = (s) => {
+    if (!s) return '0:00';
+    const m = Math.floor(s / 60), secs = Math.floor(s % 60);
+    return `${m}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const formatDate = (timestamp) => {
-    if (!timestamp) return 'N/A';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleString();
+  const hostLabel = (r) => {
+    if (r.hostName) return r.hostName;
+    if (!r.hostPhoneNumber) return 'Unknown';
+    return mappings[r.hostPhoneNumber]
+      ? `${mappings[r.hostPhoneNumber]}`
+      : r.hostPhoneNumber;
   };
 
+  const badgeClass = (type) => {
+    const t = (type || '').toLowerCase();
+    if (t === 'incoming') return 'badge incoming';
+    if (t === 'outgoing') return 'badge outgoing';
+    if (t === 'missed')   return 'badge missed';
+    return 'badge unknown';
+  };
+
+  /* ── Play ── */
   const playRecording = async (record) => {
-    const audioUrl = record.storageUrl || record.recordingPath;
-    if (!audioUrl) return;
-    
+    const key = record.recordingKey || record.storageUrl;
+    if (!key || playingId === record._id) return;
+    if (audioEl) audioEl.pause();
     try {
-      // If same recording is already loaded, do nothing (user can control via player)
-      if (playingId === record.id) {
-        return;
-      }
-
-      // Stop any currently playing audio
-      if (audioElement) {
-        audioElement.pause();
-      }
-      
-      let url = audioUrl;
-      if (!audioUrl.startsWith('http')) {
-        const audioRef = ref(storage, audioUrl);
-        url = await getDownloadURL(audioRef);
-      }
-      
-      setPlayingId(record.id);
+      const url = await getRecordingUrl(key);
+      setPlayingId(record._id);
+      setPlayingLabel(record.phoneNumber || 'Recording');
       setCurrentAudioUrl(url);
-    } catch (err) {
-      console.error('Error playing recording:', err);
-      alert('Could not play recording');
-    }
+    } catch { alert('Could not load recording'); }
   };
 
   const stopAudio = () => {
     setPlayingId(null);
+    setPlayingLabel('');
     setCurrentAudioUrl(null);
-    setAudioElement(null);
+    setAudioEl(null);
   };
 
-  const saveContactMapping = async (e) => {
+  /* ── Contact mappings ── */
+  const saveMappings = async (e) => {
     e.preventDefault();
-    if (!newContactPhone.trim() || !newContactName.trim()) {
-      alert('Please enter both phone number and name');
-      return;
-    }
-
-    try {
-      const updatedMappings = {
-        ...contactMappings,
-        [newContactPhone]: newContactName
-      };
-      
-      await setDoc(doc(db, 'settings', 'contact_mappings'), updatedMappings);
-      setContactMappings(updatedMappings);
-      setNewContactPhone('');
-      setNewContactName('');
-      alert('Contact mapping saved successfully!');
-    } catch (err) {
-      console.error('Error saving contact mapping:', err);
-      alert('Failed to save contact mapping');
-    }
+    if (!newPhone.trim() || !newName.trim()) return;
+    const updated = { ...mappings, [newPhone.trim()]: newName.trim() };
+    await saveContactMappings(updated);
+    setMappings(updated);
+    setNewPhone(''); setNewName('');
   };
 
-  const deleteContactMapping = async (phoneNumber) => {
-    if (!confirm(`Delete mapping for ${phoneNumber}?`)) return;
+  /* ── Pagination ── */
+  const totalPages = Math.ceil(filtered.length / RECORDS_PER_PAGE);
+  const pageStart  = (currentPage - 1) * RECORDS_PER_PAGE;
+  const pageSlice  = filtered.slice(pageStart, pageStart + RECORDS_PER_PAGE);
 
-    try {
-      const updatedMappings = { ...contactMappings };
-      delete updatedMappings[phoneNumber];
-      
-      await setDoc(doc(db, 'settings', 'contact_mappings'), updatedMappings);
-      setContactMappings(updatedMappings);
-    } catch (err) {
-      console.error('Error deleting contact mapping:', err);
-      alert('Failed to delete contact mapping');
-    }
+  const pageNumbers = () => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const pages = new Set([1, totalPages, currentPage, currentPage - 1, currentPage + 1].filter(p => p >= 1 && p <= totalPages));
+    return [...pages].sort((a, b) => a - b);
   };
 
-  const getHostDisplayName = (record) => {
-    // Use hostName if available
-    if (record.hostName) {
-      return record.hostName;
-    }
-    
-    // Otherwise use hostPhoneNumber with mapping
-    if (!record.hostPhoneNumber) {
-      console.warn('⚠️ Missing hostPhoneNumber in record');
-      return 'Unknown';
-    }
-    const name = contactMappings[record.hostPhoneNumber];
-    const result = name ? `${name} (${record.hostPhoneNumber})` : record.hostPhoneNumber;
-    return result;
-  };
+  /* ── Today count ── */
+  const todayCount = records.filter(r => {
+    const d = r.timestamp ? new Date(r.timestamp) : null;
+    return d && d.toDateString() === new Date().toDateString();
+  }).length;
 
-  const copyToClipboard = async (url) => {
-    try {
-      await navigator.clipboard.writeText(url);
-      alert('Link copied to clipboard!');
-    } catch (err) {
-      console.error('Failed to copy:', err);
-      alert('Failed to copy link');
-    }
-  };
+  /* ── Loading / Login ── */
+  if (loading) return <div className="loading">Loading…</div>;
 
-  // Pagination
-  const indexOfLastRecord = currentPage * recordsPerPage;
-  const indexOfFirstRecord = indexOfLastRecord - recordsPerPage;
-  const currentRecords = filteredRecords.slice(indexOfFirstRecord, indexOfLastRecord);
-  const totalPages = Math.ceil(filteredRecords.length / recordsPerPage);
-
-  const paginate = (pageNumber) => setCurrentPage(pageNumber);
-
-  if (loading) {
-    return <div className="loading">Loading...</div>;
-  }
-
-  if (!user) {
-    return (
-      <div className="login-container">
-        <div className="login-box">
-          <h1>Call Track</h1>
-          <p>Admin Dashboard</p>
-          <form onSubmit={handleLogin}>
-            <input
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-            <input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-            {error && <div className="error">{error}</div>}
-            <button type="submit">Login</button>
-          </form>
-        </div>
+  if (!user) return (
+    <div className="login-container">
+      <div className="login-box">
+        <div className="login-logo">📞</div>
+        <h1>Call Track</h1>
+        <p>Admin Dashboard</p>
+        <form onSubmit={async (e) => {
+          e.preventDefault(); setLoginError('');
+          try {
+            const data = await login(email, password);
+            setUser({ email: data.email });
+          } catch { setLoginError('Invalid email or password'); }
+        }}>
+          <input type="email" placeholder="Email address" value={email}
+            onChange={e => setEmail(e.target.value)} required autoFocus />
+          <input type="password" placeholder="Password" value={password}
+            onChange={e => setPassword(e.target.value)} required />
+          {loginError && <div className="error">{loginError}</div>}
+          <button type="submit">Sign in →</button>
+        </form>
       </div>
-    );
-  }
+    </div>
+  );
 
+  /* ── Dashboard ── */
   return (
     <div className="dashboard">
+
+      {/* Top bar */}
       <header className="top-bar">
-        <h1>Call Recording Dashboard</h1>
+        <div className="top-bar-left">
+          <div className="top-bar-icon">📞</div>
+          <h1>Call Track</h1>
+        </div>
         <div className="header-right">
-          <span className="user-email">{user.email}</span>
-          <button onClick={handleLogout} className="logout-btn">Logout</button>
+          <div className="user-pill">👤 {user.email}</div>
+          <button className="logout-btn" onClick={() => { logout(); setUser(null); }}>Sign out</button>
         </div>
       </header>
 
       <main className="main-content">
         <div className="content-wrapper">
 
+          {/* Stats */}
           <div className="stats">
             <div className="stat-card">
               <h3>Total Recordings</h3>
               <p>{records.length}</p>
+              <span className="stat-label">all time</span>
             </div>
             <div className="stat-card">
               <h3>Today</h3>
-              <p>{records.filter(r => {
-                const date = r.timestamp?.toDate ? r.timestamp.toDate() : new Date(r.timestamp);
-                return date.toDateString() === new Date().toDateString();
-              }).length}</p>
+              <p>{todayCount}</p>
+              <span className="stat-label">calls today</span>
             </div>
             <div className="stat-card">
-              <h3>Showing</h3>
-              <p>{filteredRecords.length} of {records.length}</p>
+              <h3>Filtered</h3>
+              <p>{filtered.length}</p>
+              <span className="stat-label">matching results</span>
             </div>
           </div>
 
-          <div className="filters-container">
-            <input
-              type="text"
-              placeholder="Search by host name, phone number..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="search-input"
-            />
-            <select 
-              value={sortBy} 
-              onChange={(e) => setSortBy(e.target.value)}
-              className="sort-select"
-            >
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First</option>
-              <option value="longest">Longest Duration</option>
-              <option value="shortest">Shortest Duration</option>
-            </select>
-          </div>
-
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Date & Time</th>
-                  <th>Host (Device Owner)</th>
-                  <th>Number Called</th>
-                  <th>Type</th>
-                  <th>Duration</th>
-                  <th>Recording</th>
-                  <th>Share</th>
-                </tr>
-              </thead>
-              <tbody>
-                {currentRecords.length === 0 ? (
-                  <tr>
-                    <td colSpan="7" className="no-data">
-                      {searchQuery ? 'No matching records found' : 'No call records yet'}
-                    </td>
-                  </tr>
-                ) : (
-                  currentRecords.map((record) => (
-                    <tr key={record.id}>
-                      <td>{formatDate(record.timestamp)}</td>
-                      <td className="host-info">
-                        <div className="host-cell">
-                          <div className="host-number">{getHostDisplayName(record)}</div>
-                          {record.hostPhoneNumber && <div className="device-name">{record.hostPhoneNumber}</div>}
-                          {record.deviceName && <div className="device-name">{record.deviceName}</div>}
-                          {record.deviceId && <div className="device-id">{record.deviceId}</div>}
-                        </div>
-                      </td>
-                      <td className="phone-number">{record.phoneNumber || 'Unknown'}</td>
-                      <td>
-                        <span className={`call-type ${record.callType?.toLowerCase()}`}>
-                          {record.callType || 'Unknown'}
-                        </span>
-                      </td>
-                      <td>{formatDuration(record.duration)}</td>
-                      <td>
-                        {(record.storageUrl || record.recordingPath) ? (
-                          <button 
-                            className={`play-btn ${playingId === record.id ? 'playing' : ''}`}
-                            onClick={() => playRecording(record)}
-                          >
-                            {playingId === record.id ? '⏸️ Playing' : '▶️ Play'}
-                          </button>
-                        ) : (
-                          <span className="no-recording">No recording</span>
-                        )}
-                      </td>
-                      <td>
-                        {record.storageUrl ? (
-                          <button 
-                            className="share-btn"
-                            onClick={() => copyToClipboard(record.storageUrl)}
-                            title="Copy link to clipboard"
-                          >
-                            🔗 Share
-                          </button>
-                        ) : (
-                          <span className="no-share">-</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="pagination">
-              <button 
-                onClick={() => paginate(currentPage - 1)}
-                disabled={currentPage === 1}
-                className="page-btn"
-              >
-                Previous
-              </button>
-              <span className="page-info">
-                Page {currentPage} of {totalPages}
-              </span>
-              <button 
-                onClick={() => paginate(currentPage + 1)}
-                disabled={currentPage === totalPages}
-                className="page-btn"
-              >
-                Next
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Audio Player */}
-        {currentAudioUrl && (
-          <div className="audio-player-container">
-            <div className="audio-player">
-              <span className="audio-label">Now Playing</span>
-              <audio 
-                controls 
-                src={currentAudioUrl}
-                autoPlay
-                onEnded={stopAudio}
-                ref={(audio) => {
-                  if (audio) setAudioElement(audio);
-                }}
+          {/* Toolbar */}
+          <div className="toolbar">
+            <div className="search-wrap">
+              <span className="search-icon">🔍</span>
+              <input
+                className="search-input"
+                type="text"
+                placeholder="Search by number, name, host…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
               />
-              <button className="close-player" onClick={stopAudio}>×</button>
             </div>
+            <select className="sort-select" value={sortBy} onChange={e => setSortBy(e.target.value)}>
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="longest">Longest duration</option>
+              <option value="shortest">Shortest duration</option>
+            </select>
+            <button className="refresh-btn" onClick={loadRecords}>↻ Refresh</button>
           </div>
-        )}
+
+          {/* Table */}
+          <div className="table-card">
+            <div className="table-header">
+              <h2>Call Records</h2>
+              <span className="record-count">
+                {pageStart + 1}–{Math.min(pageStart + RECORDS_PER_PAGE, filtered.length)} of {filtered.length}
+              </span>
+            </div>
+
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date & Time</th>
+                    <th>Host</th>
+                    <th>Number Called</th>
+                    <th>Type</th>
+                    <th>Duration</th>
+                    <th>Recording</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageSlice.length === 0 ? (
+                    <tr><td className="no-data" colSpan="6">
+                      {search ? 'No records match your search.' : 'No call records yet.'}
+                    </td></tr>
+                  ) : pageSlice.map((record) => {
+                    const { date, time } = fmt(record.timestamp);
+                    const hasAudio = !!(record.recordingKey || record.storageUrl);
+                    const isPlaying = playingId === record._id;
+                    return (
+                      <tr key={record._id}>
+                        <td>
+                          <div className="date-cell">
+                            {date}
+                            <span className="time">{time}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="host-cell">
+                            <span className="host-name">{hostLabel(record)}</span>
+                            {record.hostPhoneNumber && <span className="host-sub">{record.hostPhoneNumber}</span>}
+                            {record.deviceName && <span className="host-sub">{record.deviceName}</span>}
+                          </div>
+                        </td>
+                        <td><span className="phone-cell">{record.phoneNumber || '—'}</span></td>
+                        <td><span className={badgeClass(record.callType)}>{record.callType || 'Unknown'}</span></td>
+                        <td><span className="duration-cell">{fmtDuration(record.duration)}</span></td>
+                        <td>
+                          <div className="action-group">
+                            {hasAudio ? (
+                              <>
+                                <button className={`btn-play${isPlaying ? ' playing' : ''}`} onClick={() => playRecording(record)}>
+                                  {isPlaying ? '⏸ Playing' : '▶ Play'}
+                                </button>
+                                <button className="btn-share" onClick={async () => {
+                                  try {
+                                    const url = await getRecordingUrl(record.recordingKey || record.storageUrl);
+                                    await navigator.clipboard.writeText(url);
+                                    alert('Link copied!');
+                                  } catch { alert('Failed to copy link'); }
+                                }}>
+                                  ↗ Share
+                                </button>
+                              </>
+                            ) : (
+                              <span className="no-recording">No audio</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="pagination">
+                <span className="pagination-info">
+                  Showing {Math.min(RECORDS_PER_PAGE, filtered.length - pageStart)} of {filtered.length} records
+                </span>
+                <div className="pagination-controls">
+                  <button className="page-btn" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 1}>
+                    ← Prev
+                  </button>
+                  <div className="page-numbers">
+                    {pageNumbers().reduce((acc, page, i, arr) => {
+                      if (i > 0 && page - arr[i - 1] > 1) {
+                        acc.push(<span key={`gap-${i}`} className="page-info">…</span>);
+                      }
+                      acc.push(
+                        <button
+                          key={page}
+                          className={`page-number${currentPage === page ? ' active' : ''}`}
+                          onClick={() => setCurrentPage(page)}
+                        >{page}</button>
+                      );
+                      return acc;
+                    }, [])}
+                  </div>
+                  <button className="page-btn" onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage === totalPages}>
+                    Next →
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+        </div>
       </main>
+
+      {/* Audio Player */}
+      {currentAudioUrl && (
+        <div className="audio-player-container">
+          <div className="audio-player">
+            <span className="audio-label">Now playing</span>
+            <span className="audio-playing-name">{playingLabel}</span>
+            <audio
+              controls autoPlay src={currentAudioUrl}
+              onEnded={stopAudio}
+              ref={el => { if (el) setAudioEl(el); }}
+            />
+            <button className="close-player" onClick={stopAudio} title="Close">×</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
-export default App;
