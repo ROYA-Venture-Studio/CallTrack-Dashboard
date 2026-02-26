@@ -252,7 +252,7 @@ export default function App() {
                 <thead>
                   <tr>
                     <th>Date & Time</th>
-                    <th>Host</th>
+                    <th>Host / Device</th>
                     <th>Number Called</th>
                     <th>Type</th>
                     <th>Duration</th>
@@ -279,8 +279,8 @@ export default function App() {
                         <td>
                           <div className="host-cell">
                             <span className="host-name">{hostLabel(record)}</span>
-                            {record.hostPhoneNumber && <span className="host-sub">{record.hostPhoneNumber}</span>}
-                            {record.deviceName && <span className="host-sub">{record.deviceName}</span>}
+                            {record.hostPhoneNumber && <span className="host-sub">📱 {record.hostPhoneNumber}</span>}
+                            {record.deviceName && <span className="host-sub device-model">🔧 {record.deviceName}</span>}
                           </div>
                         </td>
                         <td><span className="phone-cell">{record.phoneNumber || '—'}</span></td>

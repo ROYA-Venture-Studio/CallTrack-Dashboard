@@ -405,6 +405,7 @@ tbody tr:hover { background: #f8fafc; }
 .host-cell { display: flex; flex-direction: column; gap: 2px; }
 .host-name { font-weight: 600; color: var(--text); font-size: 0.875rem; }
 .host-sub { font-size: 0.75rem; color: var(--text-3); }
+.host-sub.device-model { font-style: italic; color: var(--text-3); opacity: 0.8; }
 
 .phone-cell { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; font-weight: 500; color: var(--text); }
 
